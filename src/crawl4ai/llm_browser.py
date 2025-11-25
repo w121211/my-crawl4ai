@@ -26,13 +26,15 @@ import asyncio
 import json
 import os
 import re
-from pathlib import Path
 from datetime import datetime
-from urllib.parse import urlparse
+from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
-from openai import OpenAI
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from openrouter import OpenRouter
+
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 
 # Load environment variables
 load_dotenv()
@@ -47,7 +49,7 @@ class LLMBrowser:
         goal: str,
         max_depth: int = 1,
         sleep_between_requests: float = 2.5,
-        llm_model: str = "anthropic/claude-3.5-sonnet",
+        llm_model: str = "google/gemini-flash-1.5",
         output_base_dir: str = "output/crawl4ai",
     ):
         """
@@ -69,15 +71,12 @@ class LLMBrowser:
         self.llm_model = llm_model
         self.output_base_dir = output_base_dir
 
-        # Initialize OpenAI client for OpenRouter
+        # Initialize OpenRouter client
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY must be set in .env file")
 
-        self.llm_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key
-        )
+        self.llm_client = OpenRouter(api_key=api_key)
 
         # Track crawl session
         self.session_start = datetime.now()
@@ -93,7 +92,7 @@ class LLMBrowser:
         # Sanitize start URL for directory name
         parsed = urlparse(self.start_url)
         url_clean = parsed.netloc + parsed.path.rstrip("/")
-        url_clean = re.sub(r'[^\w\-.]', '_', url_clean)  # Replace special chars
+        url_clean = re.sub(r"[^\w\-.]", "_", url_clean)  # Replace special chars
         if len(url_clean) > 80:
             url_clean = url_clean[:80]
 
@@ -143,9 +142,9 @@ PAGE CONTENT (Markdown):
 
     async def _crawl_page(self, url: str, crawler: AsyncWebCrawler) -> dict:
         """Crawl a single page and return result"""
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Crawling: {url}")
-        print('='*60)
+        print("=" * 60)
 
         crawler_config = CrawlerRunConfig(
             wait_until="domcontentloaded",
@@ -167,10 +166,12 @@ PAGE CONTENT (Markdown):
 
         if result.success:
             # Extract markdown content
-            if hasattr(result.markdown, 'raw_markdown'):
+            if hasattr(result.markdown, "raw_markdown"):
                 crawl_result["markdown"] = result.markdown.raw_markdown
             else:
-                crawl_result["markdown"] = str(result.markdown) if result.markdown else ""
+                crawl_result["markdown"] = (
+                    str(result.markdown) if result.markdown else ""
+                )
 
             print(f"✓ Success - Status: {result.status_code}")
             print(f"  Markdown: {len(crawl_result['markdown'])} chars")
@@ -186,25 +187,27 @@ PAGE CONTENT (Markdown):
         prompt = self._get_llm_prompt(page_content, url)
 
         try:
-            response = self.llm_client.chat.completions.create(
+            response = self.llm_client.chat.send(
                 model=self.llm_model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"}
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
             )
 
             result = json.loads(response.choices[0].message.content)
 
             # Validate required fields
             if "links" not in result:
-                print("  ⚠ Warning: LLM response missing 'links' field, using empty list")
+                print(
+                    "  ⚠ Warning: LLM response missing 'links' field, using empty list"
+                )
                 result.setdefault("links", [])
 
             print(f"  Links found: {len(result.get('links', []))}")
 
             # Show extracted content info
-            custom_fields = {k: v for k, v in result.items() if k != 'links' and v is not None}
+            custom_fields = {
+                k: v for k, v in result.items() if k != "links" and v is not None
+            }
             if custom_fields:
                 print(f"  Extracted fields: {list(custom_fields.keys())}")
 
@@ -221,7 +224,7 @@ PAGE CONTENT (Markdown):
     def _save_page_result(self, page_data: dict, page_index: int):
         """Save individual page result to JSON file"""
         domain = urlparse(page_data["url"]).netloc
-        safe_domain = re.sub(r'[^\w\-.]', '_', domain)
+        safe_domain = re.sub(r"[^\w\-.]", "_", domain)
 
         filename = f"page-{page_index}-{safe_domain}.json"
         filepath = self.output_dir / "pages" / filename
@@ -252,22 +255,22 @@ PAGE CONTENT (Markdown):
                 for i, p in enumerate(self.pages_crawled)
             ],
             "total_urls_visited": len(self.visited_urls),
-            "duplicate_urls_skipped": len(self.visited_urls) - len(self.pages_crawled)
+            "duplicate_urls_skipped": len(self.visited_urls) - len(self.pages_crawled),
         }
 
         filepath = self.output_dir / "summary.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Session summary saved: {filepath}")
-        print('='*60)
+        print("=" * 60)
 
     async def browse(self):
         """Execute the browsing session"""
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("LLM-GUIDED BROWSING SESSION")
-        print('='*60)
+        print("=" * 60)
         print(f"Start URL: {self.start_url}")
         print(f"Goal: {self.goal}")
         print(f"Max depth: {self.max_depth}")
@@ -293,13 +296,12 @@ PAGE CONTENT (Markdown):
             self.visited_urls.add(self.start_url)
 
             if not crawl_result["success"]:
-                print(f"\n✗ Failed to crawl start URL. Aborting.")
+                print("\n✗ Failed to crawl start URL. Aborting.")
                 return
 
             # Analyze with LLM
             analysis = self._analyze_with_llm(
-                crawl_result["markdown"],
-                crawl_result["url"]
+                crawl_result["markdown"], crawl_result["url"]
             )
 
             # Store page data
@@ -310,7 +312,9 @@ PAGE CONTENT (Markdown):
                 "depth": 0,
                 "crawled_at": datetime.now().isoformat(),
                 "analysis": analysis,
-                "markdown_length": len(crawl_result["markdown"]) if crawl_result["markdown"] else 0,
+                "markdown_length": len(crawl_result["markdown"])
+                if crawl_result["markdown"]
+                else 0,
             }
 
             self.pages_crawled.append(page_data)
@@ -318,7 +322,9 @@ PAGE CONTENT (Markdown):
 
             # Extract links to explore and filter out already visited URLs
             discovered_links = analysis.get("links", [])
-            links_to_explore = [url for url in discovered_links if url not in self.visited_urls][:10]
+            links_to_explore = [
+                url for url in discovered_links if url not in self.visited_urls
+            ][:10]
 
             # Show deduplication info
             if len(discovered_links) > len(links_to_explore):
@@ -334,7 +340,9 @@ PAGE CONTENT (Markdown):
 
                     # Polite browsing: sleep between requests
                     if i > 1:  # Don't sleep before first link
-                        print(f"\n  Sleeping {self.sleep_seconds}s (polite browsing)...")
+                        print(
+                            f"\n  Sleeping {self.sleep_seconds}s (polite browsing)..."
+                        )
                         await asyncio.sleep(self.sleep_seconds)
 
                     # Crawl discovered link
@@ -357,8 +365,7 @@ PAGE CONTENT (Markdown):
 
                     # Analyze with LLM
                     link_analysis = self._analyze_with_llm(
-                        link_crawl["markdown"],
-                        link_crawl["url"]
+                        link_crawl["markdown"], link_crawl["url"]
                     )
 
                     # Store page data
@@ -369,7 +376,9 @@ PAGE CONTENT (Markdown):
                         "depth": 1,
                         "crawled_at": datetime.now().isoformat(),
                         "analysis": link_analysis,
-                        "markdown_length": len(link_crawl["markdown"]) if link_crawl["markdown"] else 0,
+                        "markdown_length": len(link_crawl["markdown"])
+                        if link_crawl["markdown"]
+                        else 0,
                     }
 
                     self.pages_crawled.append(link_page_data)
@@ -378,9 +387,9 @@ PAGE CONTENT (Markdown):
             # Save session summary
             self._save_summary()
 
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print("BROWSING COMPLETE")
-            print('='*60)
+            print("=" * 60)
             print(f"Total pages crawled: {len(self.pages_crawled)}")
             print(f"Successful: {sum(1 for p in self.pages_crawled if p['success'])}")
             print(f"Failed: {sum(1 for p in self.pages_crawled if not p['success'])}")

@@ -5,6 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "atproto>=0.0.63",
     "crawl4ai>=0.7.7",
+    "openrouter>=0.0.19",
+    "python-dotenv>=1.2.1",
     "yt-dlp[curl-cffi,default]>=2025.11.12",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "src"

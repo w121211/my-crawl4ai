@@ -43,7 +43,10 @@ DELAY_RANGE = (1.0, 2.0)
 # CRAWLER
 # =============================================================================
 
-async def deep_crawl(urls: list[str], max_depth: int = 1, link_patterns: list[str] | None = None):
+
+async def deep_crawl(
+    urls: list[str], max_depth: int = 1, link_patterns: list[str] | None = None
+):
     """
     Deep crawl URLs with link following and polite delays.
 
@@ -79,13 +82,11 @@ async def deep_crawl(urls: list[str], max_depth: int = 1, link_patterns: list[st
         # stream=False,
         stream=True,
         semaphore_count=1,  # Process one page at a time
-
         # Page loading
         wait_until="domcontentloaded",
         delay_before_return_html=2.0,
         page_timeout=60000,
         screenshot=True,
-
         # Cache
         cache_mode=CacheMode.ENABLED,
         verbose=True,
@@ -95,17 +96,19 @@ async def deep_crawl(urls: list[str], max_depth: int = 1, link_patterns: list[st
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
         for start_url in urls:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Starting deep crawl: {start_url}")
             print(f"Max depth: {max_depth}")
-            print('='*60)
+            print("=" * 60)
 
             # Get domain for logging
             domain = urlparse(start_url).netloc
 
             # Stream results one-by-one
             crawl_count = 0
-            async for result in await crawler.arun(url=start_url, config=crawler_config):
+            async for result in await crawler.arun(
+                url=start_url, config=crawler_config
+            ):
                 crawl_count += 1
 
                 # Build result dict
@@ -123,21 +126,27 @@ async def deep_crawl(urls: list[str], max_depth: int = 1, link_patterns: list[st
 
                 if result.success:
                     # Extract markdown
-                    if hasattr(result.markdown, 'raw_markdown'):
+                    if hasattr(result.markdown, "raw_markdown"):
                         crawl_result["markdown"] = result.markdown.raw_markdown
                     else:
-                        crawl_result["markdown"] = str(result.markdown) if result.markdown else ""
+                        crawl_result["markdown"] = (
+                            str(result.markdown) if result.markdown else ""
+                        )
 
                     # Count links
                     if result.links:
-                        crawl_result["links_found"] = len(result.links.get("internal", []))
+                        crawl_result["links_found"] = len(
+                            result.links.get("internal", [])
+                        )
 
                     # Screenshot
                     if result.screenshot:
                         screenshot_data = result.screenshot
 
                     print(f"\n[{crawl_count}] ✓ {result.url}")
-                    print(f"    Status: {result.status_code}, Links: {crawl_result['links_found']}")
+                    print(
+                        f"    Status: {result.status_code}, Links: {crawl_result['links_found']}"
+                    )
                 else:
                     print(f"\n[{crawl_count}] ✗ {result.url}")
                     print(f"    Error: {result.error_message}")
@@ -161,12 +170,14 @@ async def main():
     )
 
     # Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("CRAWL SUMMARY")
-    print('='*60)
+    print("=" * 60)
 
     success = sum(1 for r in results if r["success"])
-    print(f"Total: {len(results)} pages ({success} success, {len(results) - success} failed)")
+    print(
+        f"Total: {len(results)} pages ({success} success, {len(results) - success} failed)"
+    )
 
     for r in results:
         status = "✓" if r["success"] else "✗"
