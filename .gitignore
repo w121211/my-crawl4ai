@@ -8,3 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+# General
+.env
+
+# This app
+tmp/*docs
+outputs/
+chrome_user_data
