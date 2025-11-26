@@ -1,8 +1,9 @@
 import os
+from pathlib import Path
 
 import pytest
 
-from bluesky.actor_feed_batch import fetch_actor_feed
+from app.bluesky.actor_feed import fetch_actor_feed
 
 
 @pytest.mark.skipif(
@@ -18,8 +19,15 @@ def test_fetch_actor_feed_real_api(tmp_path):
     # 'bsky.app' is the official Bluesky account.
     actor = "bsky.app"
 
-    output_path = fetch_actor_feed(actor=actor, limit=5, output_dir=str(tmp_path))
+    result = fetch_actor_feed(actor=actor, limit=5, output_dir=str(tmp_path))
 
+    assert result.success, f"Failed to fetch actor feed: {result.error}"
+    assert result.output_path is not None
+    assert result.actor == actor
+    assert result.post_count is not None
+    assert result.feed_data is not None
+
+    output_path = Path(result.output_path)
     assert output_path.exists()
     assert (output_path / "feed.json").exists()
     assert (output_path / "metadata.json").exists()

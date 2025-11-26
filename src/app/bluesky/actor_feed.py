@@ -4,10 +4,11 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from atproto import Client
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -17,43 +18,72 @@ logging.basicConfig(
 )
 
 
+class FetchBlueskyResult(BaseModel):
+    success: bool
+    error: Optional[str] = None
+    actor: Optional[str] = None
+    feed_data: Optional[Dict[str, Any]] = None
+    post_count: Optional[int] = None
+    fetched_at: Optional[str] = None
+    cursor: Optional[str] = None
+    output_path: Optional[str] = None
+
+
 def fetch_actor_feed(
     actor: str,
     *,
     limit: int = 25,
     feed_filter: str = "posts_and_author_threads",
     cursor: Optional[str] = None,
-    output_dir: str = "output/bluesky",
+    output_dir: Optional[str] = None,  # None = no disk write
     client: Optional[Client] = None,
     identifier: Optional[str] = None,
     password: Optional[str] = None,
-) -> Path:
-    """Fetch a single actor feed and persist it to disk."""
+) -> FetchBlueskyResult:
+    """Fetch a single actor feed and optionally persist it to disk."""
 
     normalized_actor = actor.strip()
     if not normalized_actor:
-        raise ValueError("Actor handle or DID must be provided")
+        return FetchBlueskyResult(
+            success=False, error="Actor handle or DID must be provided"
+        )
 
-    active_client = client or _create_client(identifier, password)
+    try:
+        active_client = client or _create_client(identifier, password)
 
-    response = active_client.get_author_feed(
-        actor=normalized_actor,
-        limit=limit,
-        filter=feed_filter,
-        cursor=cursor,
-    )
+        response = active_client.get_author_feed(
+            actor=normalized_actor,
+            limit=limit,
+            filter=feed_filter,
+            cursor=cursor,
+        )
 
-    output_path = _store_feed_response(
-        normalized_actor,
-        response,
-        limit=limit,
-        feed_filter=feed_filter,
-        cursor=cursor,
-        output_dir=output_dir,
-    )
+        feed_data = _serialize_response(response)
+        output_path = None
 
-    logger.info("Stored feed for %s at %s", normalized_actor, output_path)
-    return output_path
+        if output_dir is not None:
+            output_path = _store_feed_response(
+                normalized_actor,
+                response,
+                limit=limit,
+                feed_filter=feed_filter,
+                cursor=cursor,
+                output_dir=output_dir,
+            )
+            logger.info("Stored feed for %s at %s", normalized_actor, output_path)
+
+        return FetchBlueskyResult(
+            success=True,
+            actor=normalized_actor,
+            feed_data=feed_data,
+            post_count=len(getattr(response, "feed", [])),
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            cursor=getattr(response, "cursor", None),
+            output_path=str(output_path) if output_path else None,
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch actor feed for {normalized_actor}: {e}")
+        return FetchBlueskyResult(success=False, error=str(e), actor=normalized_actor)
 
 
 def _create_client(identifier: Optional[str], password: Optional[str]) -> Client:
@@ -77,7 +107,7 @@ def _store_feed_response(
     limit: int,
     feed_filter: str,
     cursor: Optional[str],
-    output_dir: str,
+    output_dir: str = "output/bluesky",
 ) -> Path:
     output_path = _prepare_output_path(actor, output_dir)
     serialized_feed = _serialize_response(response)
