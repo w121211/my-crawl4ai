@@ -22,6 +22,7 @@ class FetchBlueskyResult(BaseModel):
     success: bool
     error: Optional[str] = None
     actor: Optional[str] = None
+    profile_url: Optional[str] = None
     feed_data: Optional[Dict[str, Any]] = None
     post_count: Optional[int] = None
     fetched_at: Optional[str] = None
@@ -72,9 +73,14 @@ def fetch_actor_feed(
             )
             logger.info("Stored feed for %s at %s", normalized_actor, output_path)
 
+        # Construct Bluesky web profile URL (remove @ prefix if present)
+        clean_handle = normalized_actor.lstrip("@")
+        profile_url = f"https://bsky.app/profile/{clean_handle}"
+
         return FetchBlueskyResult(
             success=True,
             actor=normalized_actor,
+            profile_url=profile_url,
             feed_data=feed_data,
             post_count=len(getattr(response, "feed", [])),
             fetched_at=datetime.now(timezone.utc).isoformat(),

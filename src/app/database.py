@@ -79,30 +79,47 @@ async def init_db():
         await db.commit()
 
 
-async def create_job(
+async def create_crawl_job(
     worker: str,
     request_url: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
-) -> str:
-    job_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
-    meta_json = json.dumps(metadata) if metadata else None
+) -> CrawlJob:
+    now = datetime.utcnow()
+    job = CrawlJob(
+        id=str(uuid.uuid4()),
+        status="pending",
+        worker=worker,
+        request_url=request_url,
+        metadata=metadata,
+        created_at=now,
+        updated_at=now,
+    )
+
+    meta_json = json.dumps(job.metadata) if job.metadata else None
 
     async with get_db() as db:
         await db.execute(
             """
             INSERT INTO crawl_jobs (id, status, worker, request_url, metadata, created_at, updated_at)
-            VALUES (?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-            (job_id, worker, request_url, meta_json, now, now),
+            (
+                job.id,
+                job.status,
+                job.worker,
+                job.request_url,
+                meta_json,
+                job.created_at.isoformat(),
+                job.updated_at.isoformat(),
+            ),
         )
         await db.commit()
-    return job_id
+    return job
 
 
-async def get_pending_job(
+async def get_pending_crawl_job(
     worker_type: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[CrawlJob]:
     async with get_db() as db:
         query = "SELECT * FROM crawl_jobs WHERE status = 'pending'"
         params = []
@@ -116,11 +133,19 @@ async def get_pending_job(
         async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             if row:
-                return dict(row)
+                return CrawlJob(
+                    id=row["id"],
+                    status=row["status"],
+                    worker=row["worker"],
+                    request_url=row["request_url"],
+                    metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                )
     return None
 
 
-async def update_job_status(
+async def update_crawl_job_status(
     job_id: str, status: str, metadata: Optional[Dict[str, Any]] = None
 ):
     now = datetime.utcnow().isoformat()
@@ -151,45 +176,56 @@ async def update_job_status(
         await db.commit()
 
 
-async def save_result(
+async def save_crawl_result(
     job_id: str,
     final_url: str,
     data: Dict[str, Any],
     original_url: Optional[str] = None,
     success: bool = True,
     metadata: Optional[Dict[str, Any]] = None,
-):
-    result_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
-    data_json = json.dumps(data)
-    meta_json = json.dumps(metadata) if metadata else None
+) -> CrawlResult:
+    now = datetime.utcnow()
+    result = CrawlResult(
+        id=str(uuid.uuid4()),
+        job_id=job_id,
+        original_url=original_url,
+        final_url=final_url,
+        data=data,
+        success=success,
+        metadata=metadata,
+        created_at=now,
+    )
+
+    data_json = json.dumps(result.data)
+    meta_json = json.dumps(result.metadata) if result.metadata else None
 
     async with get_db() as db:
         await db.execute(
             """
             INSERT INTO crawl_results (id, job_id, original_url, final_url, data, success, metadata, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+            """,
             (
-                result_id,
-                job_id,
-                original_url,
-                final_url,
+                result.id,
+                result.job_id,
+                result.original_url,
+                result.final_url,
                 data_json,
-                success,
+                result.success,
                 meta_json,
-                now,
+                result.created_at.isoformat(),
             ),
         )
         await db.commit()
+    return result
 
 
-async def get_cached_result(
+async def get_cached_crawl_result(
     worker: str, request_url: str, cache_duration_seconds: int
-) -> Optional[Dict[str, Any]]:
+) -> Optional[CrawlResult]:
     """
     Check if there is a recent successful crawl for the given worker and URL.
-    Returns the data from the most recent result if found and within the cache duration.
+    Returns the CrawlResult from the most recent result if found and within the cache duration.
     """
     async with get_db() as db:
         # Calculate the cutoff time
@@ -198,11 +234,11 @@ async def get_cached_result(
         # We need to join crawl_jobs and crawl_results to check worker type and success
         # We select the most recent one
         query = """
-            SELECT r.data, r.final_url, r.metadata, j.created_at
+            SELECT r.id, r.job_id, r.original_url, r.final_url, r.data, r.success, r.metadata, r.created_at
             FROM crawl_results r
             JOIN crawl_jobs j ON r.job_id = j.id
-            WHERE j.worker = ? 
-              AND j.request_url = ? 
+            WHERE j.worker = ?
+              AND j.request_url = ?
               AND r.success = 1
             ORDER BY j.created_at DESC
             LIMIT 1
@@ -211,15 +247,18 @@ async def get_cached_result(
         async with db.execute(query, (worker, request_url)) as cursor:
             row = await cursor.fetchone()
             if row:
-                # Check time
-                # created_at is stored as ISO string
-                job_time = datetime.fromisoformat(row["created_at"])
-                if job_time.timestamp() > cutoff_time:
-                    return {
-                        "data": json.loads(row["data"]),
-                        "final_url": row["final_url"],
-                        "metadata": json.loads(row["metadata"])
-                        if row["metadata"]
-                        else None,
-                    }
+                # Check time - use job created_at for cache expiry
+                # We need to fetch the job's created_at separately or include it in query
+                result_time = datetime.fromisoformat(row["created_at"])
+                if result_time.timestamp() > cutoff_time:
+                    return CrawlResult(
+                        id=row["id"],
+                        job_id=row["job_id"],
+                        original_url=row["original_url"],
+                        final_url=row["final_url"],
+                        data=json.loads(row["data"]),
+                        success=bool(row["success"]),
+                        metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                        created_at=result_time,
+                    )
     return None

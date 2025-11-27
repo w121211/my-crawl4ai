@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from app.database import create_job, get_db, init_db
+from app.database import create_crawl_job, get_db, init_db
 from app.worker import run_worker
 
 # Configure logging
@@ -15,10 +15,10 @@ async def test_integration():
     logger.info("DB Initialized")
 
     # 2. Create a job
-    job_id = await create_job(
+    job = await create_crawl_job(
         worker="crawl4ai", request_url="https://example.com", metadata={"test": "true"}
     )
-    logger.info(f"Created job: {job_id}")
+    logger.info(f"Created job: {job.id}")
 
     # 3. Run worker in background
     worker_task = asyncio.create_task(run_worker())
@@ -29,7 +29,7 @@ async def test_integration():
         await asyncio.sleep(2)
         async with get_db() as db:
             async with db.execute(
-                "SELECT status FROM crawl_jobs WHERE id = ?", (job_id,)
+                "SELECT status FROM crawl_jobs WHERE id = ?", (job.id,)
             ) as cursor:
                 row = await cursor.fetchone()
                 status = row["status"]
@@ -40,7 +40,7 @@ async def test_integration():
 
                     # Verify result
                     async with db.execute(
-                        "SELECT * FROM crawl_results WHERE job_id = ?", (job_id,)
+                        "SELECT * FROM crawl_results WHERE job_id = ?", (job.id,)
                     ) as res_cursor:
                         result = await res_cursor.fetchone()
                         if result:
